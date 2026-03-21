@@ -1,0 +1,80 @@
+{
+    "global": {
+        "project_name": "Omni-InfoFlow",
+        "log_level": "INFO"
+    },
+    "workflow": {
+        "steps": [
+            "source",
+            "parser",
+            "ai",
+            "media",
+            "dispatch"
+        ],
+        "optional_steps": [
+            "ai",
+            "media"
+        ],
+        "continue_on_error": [
+            "media"
+        ],
+        "max_concurrency": 3,
+        "retry_policy": {
+            "default_retries": 2
+        }
+    },
+    "plugins": {
+        "sources": [
+            {
+                "class": "app.plugins.sources.rss.RSSPlugin",
+                "enabled": false,
+                "config": {
+                    "feed_urls": [],
+                    "fetch_interval_min": 30
+                }
+            }
+        ],
+        "parsers": [
+            {
+                "class": "app.plugins.parsers.html_cleaner.HTMLCleanerPlugin",
+                "enabled": false,
+                "config": {}
+            }
+        ],
+        "ai": [
+            {
+                "class": "app.plugins.ai.llm_client.LLMClientPlugin",
+                "enabled": false,
+                "config": {
+                    "api_base": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "max_tokens": 4096
+                }
+            }
+        ],
+        "media": [
+            {
+                "class": "app.plugins.media.edge_tts.EdgeTTSPlugin",
+                "enabled": false,
+                "config": {
+                    "voice": "zh-CN-XiaoxiaoNeural",
+                    "rate": "+0%"
+                }
+            }
+        ],
+        "dispatchers": [
+            {
+                "class": "app.plugins.dispatchers.telegram.TelegramDispatcher",
+                "enabled": false,
+                "config": {
+                    "bot_token": "",
+                    "chat_id": ""
+                }
+            }
+        ]
+    },
+    "runtime": {
+        "schedule_cron": "0 */6 * * *",
+        "timezone": "Asia/Shanghai"
+    }
+}

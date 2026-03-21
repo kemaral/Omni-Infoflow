@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  omni-infoflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: omni-infoflow
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount local data directory for persistence
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      # Provide your API keys here or in a .env file
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+    networks:
+      - omni-net
+
+networks:
+  omni-net:
+    driver: bridge

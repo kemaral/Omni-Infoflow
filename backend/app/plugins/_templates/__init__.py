@@ -1,0 +1,1 @@
+# Plugin development scaffold templates

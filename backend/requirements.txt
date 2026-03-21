@@ -1,0 +1,22 @@
+# Core
+fastapi>=0.115.0,<1.0
+uvicorn[standard]>=0.30.0,<1.0
+pydantic>=2.0,<3.0
+
+# HTTP / Async
+aiohttp>=3.10,<4.0
+
+# RSS
+feedparser>=6.0,<7.0
+
+# LLM
+openai>=1.50,<2.0
+
+# Testing
+pytest>=8.0
+pytest-asyncio>=0.24
+
+# Optional (install as needed for advanced plugins)
+# readability-lxml>=0.8    # HTML cleaning (readability mode)
+# pdfplumber>=0.11         # PDF extraction
+# edge-tts>=6.0            # TTS

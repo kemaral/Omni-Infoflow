@@ -1,0 +1,34 @@
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+*.egg
+
+# ── Node ──
+node_modules/
+dist/
+.nuxt/
+.output/
+
+# ── Sensitive & Runtime ──
+backend/.env
+backend/data/config.json
+backend/data/db.sqlite
+backend/data/*.mp3
+backend/data/*.wav
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+Desktop.ini
