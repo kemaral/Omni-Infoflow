@@ -70,3 +70,32 @@ app.state.dedup_db = dedup_db
 app.state.event_bus = event_bus
 
 app.include_router(router, prefix="/api")
+
+
+# ---------------------------------------------------------------------------
+# Serve built frontend (in Docker / production mode)
+# ---------------------------------------------------------------------------
+import os
+from pathlib import Path as _Path
+
+_frontend_dist = os.environ.get(
+    "FRONTEND_DIST_DIR",
+    str(_Path(__file__).resolve().parents[2] / "frontend_dist"),
+)
+
+if _Path(_frontend_dist).is_dir():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(f"{_frontend_dist}/index.html")
+
+    # SPA catch-all: serve index.html for any unmatched frontend route
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        file_path = _Path(_frontend_dist) / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(f"{_frontend_dist}/index.html")
+

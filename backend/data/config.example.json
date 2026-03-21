@@ -30,7 +30,14 @@
                 "enabled": false,
                 "config": {
                     "feed_urls": [],
-                    "fetch_interval_min": 30
+                    "fetch_timeout": 30
+                }
+            },
+            {
+                "class": "app.plugins.sources.bilibili.BilibiliHotPlugin",
+                "enabled": false,
+                "config": {
+                    "limit": 10
                 }
             }
         ],
@@ -47,6 +54,7 @@
                 "enabled": false,
                 "config": {
                     "api_base": "https://api.openai.com/v1",
+                    "api_key_env": "OPENAI_API_KEY",
                     "model": "gpt-4o-mini",
                     "max_tokens": 4096
                 }
@@ -54,7 +62,7 @@
         ],
         "media": [
             {
-                "class": "app.plugins.media.edge_tts.EdgeTTSPlugin",
+                "class": "app.plugins.media.edgetts.EdgeTTSPlugin",
                 "enabled": false,
                 "config": {
                     "voice": "zh-CN-XiaoxiaoNeural",
@@ -66,9 +74,18 @@
             {
                 "class": "app.plugins.dispatchers.telegram.TelegramDispatcher",
                 "enabled": false,
+                "config": {}
+            },
+            {
+                "class": "app.plugins.dispatchers.lark.LarkDispatcher",
+                "enabled": false,
+                "config": {}
+            },
+            {
+                "class": "app.plugins.dispatchers.markdown_export.MarkdownExportPlugin",
+                "enabled": false,
                 "config": {
-                    "bot_token": "",
-                    "chat_id": ""
+                    "output_dir": "data/exports"
                 }
             }
         ]

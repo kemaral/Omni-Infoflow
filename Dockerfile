@@ -31,21 +31,22 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend source
 COPY backend/ ./backend/
 
-# Copy built frontend assets into the backend static directory
-# We need to mount these in FastAPI to serve the SPA
+# Copy built frontend assets — served by FastAPI StaticFiles
 COPY --from=frontend-builder /app/frontend/dist ./frontend_dist
 
-# Set up data directories
-RUN mkdir -p /app/data/logs /app/data/exports
+# Set up data directories and copy default configs
+RUN mkdir -p /app/data/logs /app/data/exports /app/data/media /app/data/prompts
+# Copy example configs so first-run generates correct defaults
+COPY backend/data/config.example.json /app/data/config.example.json
+COPY backend/data/prompts/soul.md     /app/data/prompts/soul.md
 VOLUME /app/data
 
 # Environment
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/backend
-# Let backend know where frontend dist is
 ENV FRONTEND_DIST_DIR=/app/frontend_dist
 
 EXPOSE 8000
 
-# Start Uvicorn
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start Uvicorn (PYTHONPATH is /app/backend, so module is app.main)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
