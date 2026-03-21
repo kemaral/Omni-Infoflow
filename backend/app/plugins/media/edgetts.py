@@ -14,12 +14,10 @@ Config::
 
 from __future__ import annotations
 
-import asyncio
-import os
 import uuid
-from pathlib import Path
 from typing import Any
 
+from app.core.paths import MEDIA_DIR
 from app.models.workflow import PluginResult, RunContext, WorkflowItem
 from app.plugins.base import BasePlugin, PluginManifest
 
@@ -65,8 +63,7 @@ class EdgeTTSPlugin(BasePlugin):
         rate = self.config.get("rate", "+0%")
 
         # Ensure media directory exists
-        base_dir = Path(__file__).resolve().parents[3]
-        out_dir = base_dir / "data" / "media"
+        out_dir = MEDIA_DIR
         out_dir.mkdir(parents=True, exist_ok=True)
 
         filename = f"tts_{item.id}_{uuid.uuid4().hex[:6]}.mp3"

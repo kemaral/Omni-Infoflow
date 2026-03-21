@@ -20,8 +20,12 @@ Flow::
 from __future__ import annotations
 
 import asyncio
+import html
 import importlib
+import inspect
 import logging
+import pkgutil
+import re
 import tempfile
 import time
 import uuid
@@ -55,6 +59,13 @@ class PluginRegistry:
 
     # -- class cache so repeated instantiation doesn't re-import -----------
     _class_cache: dict[str, type] = {}
+    _package_map: dict[str, str] = {
+        "sources": "app.plugins.sources",
+        "parsers": "app.plugins.parsers",
+        "ai": "app.plugins.ai",
+        "media": "app.plugins.media",
+        "dispatchers": "app.plugins.dispatchers",
+    }
 
     @classmethod
     def load_class(cls, dotted_path: str) -> type:
@@ -116,9 +127,31 @@ class PluginRegistry:
 
         Used by the frontend to render the plugin store cards.
         """
+        configured_entries = {
+            entry["class"]: entry
+            for entries in configs.values()
+            for entry in entries
+            if entry.get("class")
+        }
         manifests: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        for category, package_name in cls._package_map.items():
+            for dotted_path, manifest in cls._scan_package(package_name):
+                entry = configured_entries.get(dotted_path, {})
+                manifests.append({
+                    **manifest.model_dump(),
+                    "class": dotted_path,
+                    "enabled": entry.get(
+                        "enabled", manifest.enabled_by_default
+                    ),
+                })
+                seen.add(dotted_path)
+
         for category, entries in configs.items():
             for entry in entries:
+                if entry.get("class") in seen:
+                    continue
                 try:
                     klass = cls.load_class(entry["class"])
                     manifest: PluginManifest = klass.manifest
@@ -134,11 +167,45 @@ class PluginRegistry:
                         "error": str(exc),
                         "enabled": False,
                     })
+        manifests.sort(key=lambda item: (item.get("category", ""), item.get("name", "")))
         return manifests
 
     @classmethod
     def clear_cache(cls) -> None:
         cls._class_cache.clear()
+
+    @classmethod
+    def _scan_package(
+        cls, package_name: str
+    ) -> list[tuple[str, PluginManifest]]:
+        """Discover plugin classes in a package namespace."""
+        package = importlib.import_module(package_name)
+        package_path = getattr(package, "__path__", None)
+        if package_path is None:
+            return []
+
+        discovered: list[tuple[str, PluginManifest]] = []
+        for module_info in pkgutil.iter_modules(
+            package_path, package.__name__ + "."
+        ):
+            try:
+                module = importlib.import_module(module_info.name)
+            except Exception as exc:
+                log.warning("Failed to import plugin module %s: %s", module_info.name, exc)
+                continue
+
+            for _, klass in inspect.getmembers(module, inspect.isclass):
+                if klass.__module__ != module.__name__:
+                    continue
+                if not (
+                    issubclass(klass, BasePlugin)
+                    or issubclass(klass, BaseSourcePlugin)
+                ):
+                    continue
+                manifest = getattr(klass, "manifest", None)
+                if isinstance(manifest, PluginManifest):
+                    discovered.append((f"{klass.__module__}.{klass.__name__}", manifest))
+        return discovered
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +251,7 @@ class PipelineEngine:
             "items_processed": 0,
             "items_skipped_dedup": 0,
             "items_failed": 0,
+            "source_items_failed": 0,
             "errors": [],
             "duration_ms": 0,
         }
@@ -196,7 +264,7 @@ class PipelineEngine:
 
         for src in sources:
             fetched = await self._run_source_with_retry(
-                src, context, policy
+                src, context, policy, stats
             )
             all_items.extend(fetched)
 
@@ -205,9 +273,10 @@ class PipelineEngine:
         # ── Step 2: Dedup filter ──────────────────────────────────────────
         unique_items: list[WorkflowItem] = []
         for item in all_items:
+            dedup_content = self._dedup_content(item)
             if self.db.is_duplicate(
                 source_uri=item.source_uri,
-                content=item.raw_content or "",
+                content=dedup_content,
                 external_id=item.metadata.get("external_id"),
             ):
                 stats["items_skipped_dedup"] += 1
@@ -297,7 +366,7 @@ class PipelineEngine:
             item_id=item.id,
             source_type=item.source_type,
             source_uri=item.source_uri,
-            content=item.cleaned_text or item.raw_content or "",
+            content=self._dedup_content(item),
             external_id=item.metadata.get("external_id"),
             title=item.title,
             status="failed" if item_failed else "completed",
@@ -317,6 +386,7 @@ class PipelineEngine:
         src: BaseSourcePlugin,
         context: RunContext,
         policy: WorkflowPolicy,
+        stats: dict[str, Any],
     ) -> list[WorkflowItem]:
         """Fetch from a source with retry on failure."""
         max_retries = policy.retry_policy.get("default_retries", 2)
@@ -331,12 +401,32 @@ class PipelineEngine:
             try:
                 results = await src.fetch(context)
                 duration = int((time.monotonic() - t0) * 1000)
+                failed_count = 0
                 for r in results:
                     if r.success:
                         items.append(r.item)
+                    else:
+                        failed_count += 1
+                        stats["source_items_failed"] += 1
+                        error_message = r.error or "Unknown source error"
+                        stats["errors"].append(
+                            f"source/{src.manifest.name}: {error_message}"
+                        )
+                        await self._emit(
+                            context,
+                            r.item.id,
+                            src.manifest.name,
+                            "source",
+                            "failed",
+                            message=error_message,
+                        )
                 await self._emit(
                     context, "", src.manifest.name, "source", "success",
-                    message=f"Fetched {len(results)} item(s)",
+                    message=(
+                        f"Fetched {len(items)} item(s)"
+                        if failed_count == 0
+                        else f"Fetched {len(items)} item(s), {failed_count} failed"
+                    ),
                     duration_ms=duration,
                 )
                 return items  # success — no more retries
@@ -355,12 +445,36 @@ class PipelineEngine:
                     )
                     await asyncio.sleep(wait)
                 else:
+                    stats["errors"].append(
+                        f"source/{src.manifest.name}: {exc}"
+                    )
                     await self._emit(
                         context, "", src.manifest.name, "source", "failed",
                         message=f"All retries exhausted: {exc}",
                         duration_ms=duration,
                     )
         return items
+
+    @staticmethod
+    def _dedup_content(item: WorkflowItem) -> str:
+        cached = item.status.get("_dedup_content")
+        if isinstance(cached, str):
+            return cached
+
+        text = item.raw_content or item.cleaned_text or ""
+        if "<" in text and ">" in text:
+            text = re.sub(
+                r"<(script|style)[^>]*>.*?</\1>",
+                "",
+                text,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+            text = re.sub(r"<[^>]+>", " ", text)
+
+        normalized = html.unescape(text)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        item.status["_dedup_content"] = normalized
+        return normalized
 
     async def _run_plugin_with_retry(
         self,

@@ -4,10 +4,19 @@
 
 const BASE = '/api'
 
+function adminHeaders() {
+    const token = window.localStorage.getItem('omniflow_admin_token')
+    return token ? { 'X-Omniflow-Admin-Token': token } : {}
+}
+
 async function request(path, options = {}) {
     const url = `${BASE}${path}`
     const resp = await fetch(url, {
-        headers: { 'Content-Type': 'application/json', ...options.headers },
+        headers: {
+            'Content-Type': 'application/json',
+            ...adminHeaders(),
+            ...options.headers,
+        },
         ...options,
     })
     if (!resp.ok) {
@@ -39,6 +48,14 @@ export const api = {
 
     // Plugin discovery
     discoverPlugins: () => request('/plugins/discover'),
+
+    // Prompt files
+    getSoulPrompt: () => request('/prompt/soul'),
+    saveSoulPrompt: (content) =>
+        request('/prompt/soul', {
+            method: 'PATCH',
+            body: JSON.stringify({ content }),
+        }),
 
     // SSE stream (returns EventSource instance)
     streamLogs: () => new EventSource(`${BASE}/logs/stream`),

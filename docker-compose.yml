@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   omni-infoflow:
     build:
@@ -18,6 +16,8 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - LARK_WEBHOOK_URL=${LARK_WEBHOOK_URL:-}
+      - OMNIFLOW_ADMIN_TOKEN=${OMNIFLOW_ADMIN_TOKEN:-}
     networks:
       - omni-net
 

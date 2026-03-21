@@ -169,10 +169,14 @@ const retries = computed({
 
 async function loadConfig() {
   try {
-    const cfg = await api.getConfig()
+    const [cfg, soul] = await Promise.all([
+      api.getConfig(),
+      api.getSoulPrompt(),
+    ])
     form.value.global = cfg.global || form.value.global
     form.value.workflow = cfg.workflow || form.value.workflow
     form.value.runtime = cfg.runtime || form.value.runtime
+    soulContent.value = soul.content || ''
   } catch (e) {
     msg.value = '⚠️ 加载失败: ' + e.message
   }
@@ -180,11 +184,14 @@ async function loadConfig() {
 
 async function saveConfig() {
   try {
-    await api.patchConfig({
-      global: form.value.global,
-      workflow: form.value.workflow,
-      runtime: form.value.runtime,
-    })
+    await Promise.all([
+      api.patchConfig({
+        global: form.value.global,
+        workflow: form.value.workflow,
+        runtime: form.value.runtime,
+      }),
+      api.saveSoulPrompt(soulContent.value),
+    ])
     msg.value = '✅ 配置已保存'
     setTimeout(() => msg.value = '', 3000)
   } catch (e) {

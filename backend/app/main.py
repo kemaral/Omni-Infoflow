@@ -18,6 +18,7 @@ from app.api.routes import router
 from app.core.config import ConfigManager
 from app.core.database import DedupDatabase
 from app.core.logger import EventBus
+from app.core.paths import DATA_DIR, DEFAULT_DB_PATH, ensure_runtime_layout
 
 # ---------------------------------------------------------------------------
 # Shared service singletons (attached to app.state)
@@ -37,12 +38,14 @@ logging.basicConfig(
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Startup / shutdown hooks."""
     # -- startup --
+    ensure_runtime_layout()
     await config_manager.load()
     dedup_db.init()
     logging.getLogger("omniflow").info(
-        "Omni-InfoFlow backend ready  (config=%s, db=%s)",
+        "Omni-InfoFlow backend ready  (data=%s, config=%s, db=%s)",
+        DATA_DIR,
         config_manager.path,
-        dedup_db._path,
+        DEFAULT_DB_PATH,
     )
     yield
     # -- shutdown --

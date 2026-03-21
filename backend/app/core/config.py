@@ -18,16 +18,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.core.paths import DEFAULT_CONFIG_PATH, RUNTIME_CONFIG_EXAMPLE_PATH
+
 # ---------------------------------------------------------------------------
 # Default paths — overridable via environment or constructor
 # ---------------------------------------------------------------------------
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-_DEFAULT_CONFIG_PATH = _DATA_DIR / "config.json"
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +81,10 @@ class ConfigManager:
         await mgr.patch({"runtime": {"debug": True}})  # partial update
     """
 
-    def __init__(self, path: Path | str | None = None) -> None:
-        self._path = Path(path) if path else _DEFAULT_CONFIG_PATH
+    def __init__(self, path: "Path | str | None" = None) -> None:
+        from pathlib import Path
+
+        self._path = Path(path) if path else DEFAULT_CONFIG_PATH
         self._lock = asyncio.Lock()
         self._cache: AppConfig | None = None
 
@@ -95,7 +96,11 @@ class ConfigManager:
             return self._cache
 
         if not self._path.exists():
-            self._cache = AppConfig()
+            if RUNTIME_CONFIG_EXAMPLE_PATH.exists():
+                raw = RUNTIME_CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8")
+                self._cache = AppConfig.model_validate_json(raw)
+            else:
+                self._cache = AppConfig()
             await self.save(self._cache)
             return self._cache
 

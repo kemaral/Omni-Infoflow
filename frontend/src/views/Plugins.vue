@@ -193,8 +193,23 @@ async function savePlugin(plugin) {
   const category = findCategory(plugin.category)
   if (!category) return
 
+  if (!config.value.plugins) {
+    config.value.plugins = {}
+  }
+  if (!config.value.plugins[category]) {
+    config.value.plugins[category] = []
+  }
+
   const entries = config.value.plugins?.[category] || []
-  const entry = entries.find(e => e.class === plugin.class)
+  let entry = entries.find(e => e.class === plugin.class)
+  if (!entry) {
+    entry = {
+      class: plugin.class,
+      enabled: plugin.enabled,
+      config: editedConfigs.value[plugin.class] || {},
+    }
+    entries.push(entry)
+  }
   if (entry) {
     entry.enabled = plugin.enabled
     entry.config = editedConfigs.value[plugin.class] || entry.config
