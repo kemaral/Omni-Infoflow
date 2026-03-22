@@ -183,6 +183,37 @@ class TestHappyPath:
         ai_evts = harness.events("ai")
         assert all(e.status == "skipped" for e in ai_evts)
 
+    async def test_source_partial_failures_are_reported(
+        self, harness: EngineTestHarness
+    ):
+        from tests.plugins.mock_dispatcher import MockDispatcherPlugin
+        MockDispatcherPlugin.reset()
+
+        await harness.set_config(_base_config(
+            sources=[{
+                "class": "tests.plugins.mock_partial_source.MockPartialSourcePlugin",
+                "enabled": True, "config": {},
+            }],
+            dispatchers=[{
+                "class": "tests.plugins.mock_dispatcher.MockDispatcherPlugin",
+                "enabled": True, "config": {},
+            }],
+        ))
+
+        stats = await harness.run_engine()
+
+        assert stats["items_fetched"] == 1
+        assert stats["source_items_failed"] == 1
+        assert any(
+            "mock partial source failure" in error
+            for error in stats["errors"]
+        )
+        source_failures = [
+            event for event in harness.events("source")
+            if event.status == "failed"
+        ]
+        assert len(source_failures) >= 1
+
 
 class TestDeduplication:
     """Verify that the dedup filter prevents reprocessing."""
@@ -353,7 +384,6 @@ class TestPluginDiscovery:
         }
         manifests = PluginRegistry.discover_manifests(plugins_config)
 
-        assert len(manifests) == 2
         names = [m["name"] for m in manifests]
         assert "mock_source" in names
         assert "mock_parser" in names
@@ -370,8 +400,25 @@ class TestPluginDiscovery:
             }],
         }
         manifests = PluginRegistry.discover_manifests(plugins_config)
-        assert len(manifests) == 1
-        assert "error" in manifests[0]
+        invalid = next(
+            manifest
+            for manifest in manifests
+            if manifest["name"] == "nonexistent.FakePlugin"
+        )
+        assert "error" in invalid
+
+    def test_builtin_plugins_are_discovered_without_config_entries(self):
+        manifests = PluginRegistry.discover_manifests({
+            "sources": [],
+            "parsers": [],
+            "ai": [],
+            "media": [],
+            "dispatchers": [],
+        })
+
+        names = {manifest["name"] for manifest in manifests}
+        assert "rss_source" in names
+        assert "html_cleaner" in names
 
 
 class TestEventTelemetry:

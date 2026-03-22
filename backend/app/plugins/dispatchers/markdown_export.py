@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
+from app.core.paths import EXPORTS_DIR, resolve_runtime_path
 from app.models.workflow import PluginResult, RunContext, WorkflowItem
 from app.plugins.base import BasePlugin, PluginManifest
 
@@ -47,8 +47,9 @@ class MarkdownExportPlugin(BasePlugin):
     ) -> PluginResult:
         # Resolve output directory
         rel_dir = self.config.get("output_dir", "data/exports")
-        base_dir = Path(__file__).resolve().parents[3]
-        out_path = base_dir / rel_dir
+        out_path = (
+            EXPORTS_DIR if rel_dir == "data/exports" else resolve_runtime_path(rel_dir)
+        )
         out_path.mkdir(parents=True, exist_ok=True)
 
         # Generate filename

@@ -5,6 +5,10 @@
       <p>管理和配置所有已注册的插件模块</p>
     </div>
 
+    <div v-if="loadError" class="card" style="margin-bottom: 16px; border-color: var(--warning);">
+      <div class="text-sm" style="color: var(--warning);">{{ loadError }}</div>
+    </div>
+
     <!-- Loading -->
     <div v-if="loading" class="text-muted" style="padding: 40px; text-align: center;">
       正在发现插件...
@@ -128,9 +132,11 @@ const loading = ref(true)
 const config = ref({})
 const saveMsg = ref('')
 const editedConfigs = ref({})
+const loadError = ref('')
 
 async function loadPlugins() {
   loading.value = true
+  loadError.value = ''
   try {
     const [discovered, cfg] = await Promise.all([
       api.discoverPlugins(),
@@ -150,6 +156,9 @@ async function loadPlugins() {
     }
   } catch (e) {
     console.error('Failed to load plugins:', e)
+    loadError.value = e.status === 401
+      ? '需要管理员令牌才能读取插件配置，请先在侧栏保存 Admin Token。'
+      : '插件加载失败，请检查后端服务或配置。'
   }
   loading.value = false
 }
@@ -193,8 +202,23 @@ async function savePlugin(plugin) {
   const category = findCategory(plugin.category)
   if (!category) return
 
+  if (!config.value.plugins) {
+    config.value.plugins = {}
+  }
+  if (!config.value.plugins[category]) {
+    config.value.plugins[category] = []
+  }
+
   const entries = config.value.plugins?.[category] || []
-  const entry = entries.find(e => e.class === plugin.class)
+  let entry = entries.find(e => e.class === plugin.class)
+  if (!entry) {
+    entry = {
+      class: plugin.class,
+      enabled: plugin.enabled,
+      config: editedConfigs.value[plugin.class] || {},
+    }
+    entries.push(entry)
+  }
   if (entry) {
     entry.enabled = plugin.enabled
     entry.config = editedConfigs.value[plugin.class] || entry.config

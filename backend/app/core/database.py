@@ -14,14 +14,13 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
+
+from app.core.paths import DEFAULT_DB_PATH
 
 # ---------------------------------------------------------------------------
 # Default DB path
 # ---------------------------------------------------------------------------
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-_DEFAULT_DB_PATH = _DATA_DIR / "db.sqlite"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS processed_items (
@@ -57,8 +56,10 @@ class DedupDatabase:
         db.mark_processed(item_id="abc", source_uri="https://...", ...)
     """
 
-    def __init__(self, path: Path | str | None = None) -> None:
-        self._path = Path(path) if path else _DEFAULT_DB_PATH
+    def __init__(self, path: "Path | str | None" = None) -> None:
+        from pathlib import Path
+
+        self._path = Path(path) if path else DEFAULT_DB_PATH
         self._conn: sqlite3.Connection | None = None
 
     # -- lifecycle ----------------------------------------------------------
