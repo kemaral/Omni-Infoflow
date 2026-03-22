@@ -147,6 +147,10 @@ html, body {
   border-top: 1px solid var(--border);
 }
 
+.sidebar-status {
+  margin-bottom: 16px;
+}
+
 .sidebar-footer .status-dot {
   width: 8px;
   height: 8px;
@@ -156,6 +160,25 @@ html, body {
   margin-right: 8px;
   box-shadow: 0 0 8px var(--success-glow);
   animation: pulse 2s infinite;
+}
+
+.auth-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-actions .btn {
+  flex: 1;
+}
+
+.auth-message {
+  min-height: 20px;
 }
 
 @keyframes pulse {
@@ -514,3 +537,20 @@ html, body {
 .text-sm { font-size: 13px; }
 .text-muted { color: var(--text-muted); }
 .mono { font-family: var(--font-mono); }
+
+@media (max-width: 900px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+  }
+
+  .main-content {
+    margin-left: 0;
+    padding: 24px 18px;
+  }
+}

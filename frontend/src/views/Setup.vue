@@ -88,6 +88,9 @@
         <div class="card-header">
           <span class="card-title">⏰ 运行时</span>
         </div>
+        <div class="form-hint" style="margin-bottom: 12px;">
+          当前版本会保存调度参数，但内置定时调度器尚未启用。
+        </div>
         <div class="form-group">
           <label class="form-label">定时 Cron 表达式</label>
           <input
