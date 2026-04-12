@@ -18,11 +18,18 @@ dist/
 backend/.env
 backend/data/config.json
 backend/data/db.sqlite
+data/config.json
+data/config.example.json
+data/db.sqlite
+data/prompts/
 
 # ── Generated / Exports ──
 backend/data/exports/
 backend/data/media/
 backend/data/logs/
+data/exports/
+data/media/
+data/logs/
 *.mp3
 *.wav
 

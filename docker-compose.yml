@@ -14,10 +14,16 @@ services:
       - ./data:/app/data
     environment:
       - TZ=Asia/Shanghai
+      - OMNIFLOW_DATA_DIR=/app/data
+      - OMNIFLOW_ADMIN_TOKEN=${OMNIFLOW_ADMIN_TOKEN:-}
       # Provide your API keys here or in a .env file
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_BASE=${OPENAI_API_BASE:-https://api.openai.com/v1}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - LARK_WEBHOOK_URL=${LARK_WEBHOOK_URL:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_API_BASE=${DEEPSEEK_API_BASE:-https://api.deepseek.com/v1}
     networks:
       - omni-net
 

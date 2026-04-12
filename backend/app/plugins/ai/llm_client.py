@@ -25,11 +25,11 @@ Config::
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
 
+from app.core.paths import DEFAULT_SOUL_PATH, resolve_runtime_path
 from app.models.workflow import PluginResult, RunContext, WorkflowItem
 from app.plugins.base import BasePlugin, PluginManifest
 
@@ -146,9 +146,11 @@ class LLMClientPlugin(BasePlugin):
     def _load_soul(self, context: RunContext) -> str:
         """Load the system prompt from soul.md."""
         soul_path = self.config.get("soul_path", "data/prompts/soul.md")
-        # Resolve relative to backend root
-        base_dir = Path(__file__).resolve().parents[3]
-        full_path = base_dir / soul_path
+        full_path = (
+            DEFAULT_SOUL_PATH
+            if soul_path == "data/prompts/soul.md"
+            else resolve_runtime_path(soul_path)
+        )
 
         if full_path.exists():
             return full_path.read_text(encoding="utf-8")

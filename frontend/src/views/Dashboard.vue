@@ -43,6 +43,7 @@
         <span class="text-sm text-muted">实时推送</span>
       </div>
     </div>
+    <div v-if="msg" class="text-sm text-muted mb-16">{{ msg }}</div>
 
     <!-- Event Log -->
     <div class="card" style="padding: 16px;">
@@ -116,6 +117,7 @@ const items = ref([])
 const running = ref(false)
 const autoStream = ref(false)
 const logContainer = ref(null)
+const msg = ref('')
 let eventSource = null
 let statusTimer = null
 
@@ -133,8 +135,10 @@ async function refreshItems() {
 
 async function triggerRun() {
   running.value = true
+  msg.value = ''
   try {
     await api.triggerRun()
+    msg.value = '✅ 已触发工作流'
     // Wait a bit then refresh
     setTimeout(async () => {
       await refreshLogs()
@@ -142,7 +146,8 @@ async function triggerRun() {
       await refreshStatus()
       running.value = false
     }, 3000)
-  } catch {
+  } catch (e) {
+    msg.value = e.status === 401 ? '❌ 缺少或无效 Admin Token' : '❌ 触发失败: ' + e.message
     running.value = false
   }
 }

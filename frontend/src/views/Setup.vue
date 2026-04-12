@@ -88,6 +88,9 @@
         <div class="card-header">
           <span class="card-title">⏰ 运行时</span>
         </div>
+        <div class="form-hint" style="margin-bottom: 12px;">
+          当前版本会保存调度参数，但内置定时调度器尚未启用。
+        </div>
         <div class="form-group">
           <label class="form-label">定时 Cron 表达式</label>
           <input
@@ -111,6 +114,18 @@
       <div class="card">
         <div class="card-header">
           <span class="card-title">🧠 AI 人格</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Admin Token</label>
+          <input
+            class="form-input mono"
+            v-model="adminToken"
+            type="password"
+            placeholder="留空表示不保存本地 token"
+          />
+          <div class="form-hint">
+            当服务端配置了 OMNIFLOW_ADMIN_TOKEN 时，配置保存、触发运行和人格编辑需要此 token。
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">System Prompt (soul.md)</label>
@@ -142,7 +157,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { api } from '../api/client.js'
+import { api, getAdminToken, setAdminToken } from '../api/client.js'
 
 const form = ref({
   global: { project_name: 'Omni-InfoFlow', log_level: 'INFO' },
@@ -157,6 +172,7 @@ const form = ref({
 })
 
 const soulContent = ref('')
+const adminToken = ref(getAdminToken())
 const msg = ref('')
 
 const retries = computed({
@@ -174,21 +190,36 @@ async function loadConfig() {
     form.value.workflow = cfg.workflow || form.value.workflow
     form.value.runtime = cfg.runtime || form.value.runtime
   } catch (e) {
-    msg.value = '⚠️ 加载失败: ' + e.message
+    msg.value = e.status === 401 ? '⚠️ 缺少或无效 Admin Token' : '⚠️ 加载失败: ' + e.message
+  }
+
+  try {
+    const prompt = await api.getSoulPrompt()
+    soulContent.value = prompt.content || ''
+  } catch (e) {
+    if (e.status === 401) {
+      soulContent.value = ''
+    }
   }
 }
 
 async function saveConfig() {
+  setAdminToken(adminToken.value)
+  adminToken.value = getAdminToken()
+
   try {
-    await api.patchConfig({
-      global: form.value.global,
-      workflow: form.value.workflow,
-      runtime: form.value.runtime,
-    })
+    await Promise.all([
+      api.patchConfig({
+        global: form.value.global,
+        workflow: form.value.workflow,
+        runtime: form.value.runtime,
+      }),
+      api.saveSoulPrompt(soulContent.value),
+    ])
     msg.value = '✅ 配置已保存'
     setTimeout(() => msg.value = '', 3000)
   } catch (e) {
-    msg.value = '❌ 保存失败: ' + e.message
+    msg.value = e.status === 401 ? '❌ 缺少或无效 Admin Token' : '❌ 保存失败: ' + e.message
   }
 }
 

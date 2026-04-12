@@ -17,11 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Default DB path
-# ---------------------------------------------------------------------------
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-_DEFAULT_DB_PATH = _DATA_DIR / "db.sqlite"
+from app.core.paths import DEFAULT_DB_PATH
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS processed_items (
@@ -58,7 +54,7 @@ class DedupDatabase:
     """
 
     def __init__(self, path: Path | str | None = None) -> None:
-        self._path = Path(path) if path else _DEFAULT_DB_PATH
+        self._path = Path(path) if path else DEFAULT_DB_PATH
         self._conn: sqlite3.Connection | None = None
 
     # -- lifecycle ----------------------------------------------------------

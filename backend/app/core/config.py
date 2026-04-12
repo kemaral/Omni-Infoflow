@@ -23,11 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-# ---------------------------------------------------------------------------
-# Default paths — overridable via environment or constructor
-# ---------------------------------------------------------------------------
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-_DEFAULT_CONFIG_PATH = _DATA_DIR / "config.json"
+from app.core.paths import DEFAULT_CONFIG_PATH
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +79,7 @@ class ConfigManager:
     """
 
     def __init__(self, path: Path | str | None = None) -> None:
-        self._path = Path(path) if path else _DEFAULT_CONFIG_PATH
+        self._path = Path(path) if path else DEFAULT_CONFIG_PATH
         self._lock = asyncio.Lock()
         self._cache: AppConfig | None = None
 

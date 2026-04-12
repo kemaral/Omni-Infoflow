@@ -19,15 +19,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 
 from app.core.config import ConfigManager
 from app.core.database import DedupDatabase
 from app.core.engine import PipelineEngine, PluginRegistry
 from app.core.logger import EventBus
+from app.core.paths import DEFAULT_SOUL_PATH
 
 router = APIRouter()
 
@@ -46,6 +48,19 @@ def _bus(request: Request) -> EventBus:
     return request.app.state.event_bus
 
 
+def _require_admin(
+    x_omniflow_admin_token: str | None = Header(default=None),
+) -> None:
+    configured = os.environ.get("OMNIFLOW_ADMIN_TOKEN", "").strip()
+    if not configured:
+        return
+    if x_omniflow_admin_token != configured:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing admin token",
+        )
+
+
 # -- health -----------------------------------------------------------------
 
 @router.get("/health")
@@ -56,13 +71,17 @@ async def health():
 # -- config -----------------------------------------------------------------
 
 @router.get("/config")
-async def get_config(request: Request):
+async def get_config(request: Request, _: None = Depends(_require_admin)):
     cfg = await _cfg(request).load()
     return cfg.model_dump(by_alias=True)
 
 
 @router.patch("/config")
-async def patch_config(request: Request, body: dict[str, Any]):
+async def patch_config(
+    request: Request,
+    body: dict[str, Any],
+    _: None = Depends(_require_admin),
+):
     updated = await _cfg(request).patch(body)
     return updated.model_dump(by_alias=True)
 
@@ -74,7 +93,7 @@ _active_runs: dict[str, asyncio.Task] = {}
 
 
 @router.post("/workflow/run")
-async def trigger_run(request: Request):
+async def trigger_run(request: Request, _: None = Depends(_require_admin)):
     """Kick off a pipeline run in the background and return immediately."""
     engine = PipelineEngine(
         config=_cfg(request),
@@ -83,16 +102,14 @@ async def trigger_run(request: Request):
     )
 
     async def _do_run() -> dict[str, Any]:
-        result = await engine.execute()
-        _active_runs.pop(result.get("run_id", ""), None)
-        return result
+        return await engine.execute()
 
     task = asyncio.create_task(_do_run())
-    # We don't have run_id yet, but we'll track by task id
-    task_id = id(task)
-    _active_runs[str(task_id)] = task
+    task_id = str(id(task))
+    _active_runs[task_id] = task
+    task.add_done_callback(lambda _done: _active_runs.pop(task_id, None))
 
-    return {"message": "Pipeline run started", "task_id": str(task_id)}
+    return {"message": "Pipeline run started", "task_id": task_id}
 
 
 # -- logs / events ----------------------------------------------------------
@@ -112,8 +129,8 @@ async def stream_logs(request: Request):
 
     Usage (JavaScript)::
 
-        const es = new EventSource('/api/logs/stream');
-        es.onmessage = (e) => console.log(JSON.parse(e.data));
+        const es = new EventSource('/api/logs/stream')
+        es.onmessage = (e) => handleEvent(JSON.parse(e.data))
     """
     bus = _bus(request)
 
@@ -177,3 +194,23 @@ async def discover_plugins(request: Request):
     """
     cfg = await _cfg(request).load()
     return PluginRegistry.discover_manifests(cfg.plugins)
+
+
+@router.get("/prompt/soul")
+async def get_soul_prompt(_: None = Depends(_require_admin)):
+    if DEFAULT_SOUL_PATH.exists():
+        content = DEFAULT_SOUL_PATH.read_text(encoding="utf-8")
+    else:
+        content = ""
+    return {"content": content}
+
+
+@router.patch("/prompt/soul")
+async def patch_soul_prompt(
+    body: dict[str, Any],
+    _: None = Depends(_require_admin),
+):
+    content = str(body.get("content", ""))
+    DEFAULT_SOUL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_SOUL_PATH.write_text(content, encoding="utf-8")
+    return {"content": content}

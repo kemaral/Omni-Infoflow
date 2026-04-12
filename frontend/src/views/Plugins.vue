@@ -108,8 +108,8 @@
     </div>
 
     <!-- Save All -->
-    <div class="mt-24" v-if="plugins.length > 0">
-      <button class="btn btn-success" @click="saveAll">
+    <div class="mt-24">
+      <button v-if="plugins.length > 0" class="btn btn-success" @click="saveAll">
         ✅ 保存全部配置
       </button>
       <span class="text-sm text-muted" style="margin-left: 12px;" v-if="saveMsg">
@@ -150,6 +150,7 @@ async function loadPlugins() {
     }
   } catch (e) {
     console.error('Failed to load plugins:', e)
+    saveMsg.value = e.status === 401 ? '❌ 缺少或无效 Admin Token' : '❌ 插件加载失败'
   }
   loading.value = false
 }
@@ -209,7 +210,7 @@ async function saveAll() {
     saveMsg.value = '✅ 已保存'
     setTimeout(() => saveMsg.value = '', 3000)
   } catch (e) {
-    saveMsg.value = '❌ 保存失败: ' + e.message
+    saveMsg.value = e.status === 401 ? '❌ 缺少或无效 Admin Token' : '❌ 保存失败: ' + e.message
   }
 }
 
