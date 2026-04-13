@@ -27,9 +27,11 @@ from fastapi.responses import StreamingResponse
 
 from app.core.config import ConfigManager
 from app.core.database import DedupDatabase
-from app.core.engine import PipelineEngine, PluginRegistry
+from app.core.engine import PluginRegistry
 from app.core.logger import EventBus
 from app.core.paths import DEFAULT_SOUL_PATH
+from app.core.run_manager import RunManager
+from app.core.scheduler import SchedulerService
 
 router = APIRouter()
 
@@ -44,8 +46,20 @@ def _db(request: Request) -> DedupDatabase:
     return request.app.state.dedup_db
 
 
+def _runtime_state_db(request: Request) -> DedupDatabase:
+    return request.app.state.runtime_state_db
+
+
 def _bus(request: Request) -> EventBus:
     return request.app.state.event_bus
+
+
+def _scheduler(request: Request) -> SchedulerService:
+    return request.app.state.scheduler
+
+
+def _run_manager(request: Request) -> RunManager:
+    return request.app.state.run_manager
 
 
 def _require_admin(
@@ -83,33 +97,18 @@ async def patch_config(
     _: None = Depends(_require_admin),
 ):
     updated = await _cfg(request).patch(body)
+    scheduler = _scheduler(request)
+    if scheduler is not None:
+        await scheduler.refresh(force_recompute=True)
     return updated.model_dump(by_alias=True)
 
 
 # -- workflow ---------------------------------------------------------------
 
-# Track active runs for status reporting
-_active_runs: dict[str, asyncio.Task] = {}
-
-
 @router.post("/workflow/run")
 async def trigger_run(request: Request, _: None = Depends(_require_admin)):
     """Kick off a pipeline run in the background and return immediately."""
-    engine = PipelineEngine(
-        config=_cfg(request),
-        db=_db(request),
-        bus=_bus(request),
-    )
-
-    async def _do_run() -> dict[str, Any]:
-        return await engine.execute()
-
-    task = asyncio.create_task(_do_run())
-    task_id = str(id(task))
-    _active_runs[task_id] = task
-    task.add_done_callback(lambda _done: _active_runs.pop(task_id, None))
-
-    return {"message": "Pipeline run started", "task_id": task_id}
+    return await _run_manager(request).start_run("manual")
 
 
 # -- logs / events ----------------------------------------------------------
@@ -170,10 +169,21 @@ async def stream_logs(request: Request):
 async def get_status(request: Request):
     db = _db(request)
     bus = _bus(request)
+    scheduler = _scheduler(request).snapshot() if _scheduler(request) else None
     return {
         "processed_items_count": db.count(),
         "event_buffer_size": bus.total,
-        "active_runs": len(_active_runs),
+        "active_runs": _run_manager(request).active_runs_count(),
+        "scheduler_enabled": scheduler.enabled if scheduler else False,
+        "schedule_cron": scheduler.cron if scheduler else "",
+        "timezone": scheduler.timezone if scheduler else "UTC",
+        "next_run_at": scheduler.next_run_at if scheduler else None,
+        "last_run_started_at": scheduler.last_run_started_at if scheduler else None,
+        "last_run_finished_at": scheduler.last_run_finished_at if scheduler else None,
+        "last_run_status": scheduler.last_run_status if scheduler else None,
+        "last_run_reason": scheduler.last_run_reason if scheduler else None,
+        "active_run_id": scheduler.active_run_id if scheduler else None,
+        "admin_token_required": bool(os.environ.get("OMNIFLOW_ADMIN_TOKEN", "").strip()),
     }
 
 
@@ -182,6 +192,11 @@ async def get_status(request: Request):
 @router.get("/items")
 async def get_items(request: Request, limit: int = 50):
     return _db(request).recent_items(limit)
+
+
+@router.get("/runs")
+async def get_runs(request: Request, limit: int = 20):
+    return _runtime_state_db(request).recent_runs(limit)
 
 
 # -- plugin discovery -------------------------------------------------------
@@ -214,3 +229,4 @@ async def patch_soul_prompt(
     DEFAULT_SOUL_PATH.parent.mkdir(parents=True, exist_ok=True)
     DEFAULT_SOUL_PATH.write_text(content, encoding="utf-8")
     return {"content": content}
+

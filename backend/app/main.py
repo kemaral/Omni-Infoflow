@@ -19,6 +19,8 @@ from app.core.config import ConfigManager
 from app.core.database import DedupDatabase
 from app.core.logger import EventBus
 from app.core.paths import DATA_DIR, DEFAULT_DB_PATH, ensure_runtime_layout
+from app.core.run_manager import RunManager
+from app.core.scheduler import SchedulerService
 
 # ---------------------------------------------------------------------------
 # Shared service singletons (attached to app.state)
@@ -26,7 +28,9 @@ from app.core.paths import DATA_DIR, DEFAULT_DB_PATH, ensure_runtime_layout
 
 config_manager = ConfigManager()
 dedup_db = DedupDatabase()
+runtime_state_db = DedupDatabase()
 event_bus = EventBus()
+run_manager = RunManager(config_manager, dedup_db, runtime_state_db, event_bus)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,12 +39,21 @@ logging.basicConfig(
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup / shutdown hooks."""
     # -- startup --
     ensure_runtime_layout()
     await config_manager.load()
     dedup_db.init()
+    runtime_state_db.init()
+    scheduler = SchedulerService(
+        config_manager=config_manager,
+        state_db=runtime_state_db,
+        trigger_run=app.state.trigger_run,
+    )
+    app.state.scheduler = scheduler
+    run_manager.bind_scheduler(scheduler)
+    await scheduler.start()
     logging.getLogger("omniflow").info(
         "Omni-InfoFlow backend ready  (data=%s, config=%s, db=%s)",
         DATA_DIR,
@@ -49,6 +62,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     )
     yield
     # -- shutdown --
+    await scheduler.stop()
+    runtime_state_db.close()
     dedup_db.close()
 
 
@@ -70,7 +85,17 @@ app.add_middleware(
 # Attach shared services so route handlers can access them via request.app
 app.state.config_manager = config_manager
 app.state.dedup_db = dedup_db
+app.state.runtime_state_db = runtime_state_db
 app.state.event_bus = event_bus
+app.state.run_manager = run_manager
+app.state.scheduler = None
+
+
+async def _app_trigger_run(trigger: str) -> dict:
+    return await run_manager.start_run(trigger)
+
+
+app.state.trigger_run = _app_trigger_run
 
 app.include_router(router, prefix="/api")
 

@@ -20,6 +20,10 @@
         <div class="stat-label">活跃运行</div>
       </div>
       <div class="stat-card">
+        <div class="stat-value">{{ status.scheduler_enabled ? 'ON' : 'OFF' }}</div>
+        <div class="stat-label">调度状态</div>
+      </div>
+      <div class="stat-card">
         <div class="stat-value">{{ events.length }}</div>
         <div class="stat-label">日志条目</div>
       </div>
@@ -41,6 +45,35 @@
           <span class="toggle-slider"></span>
         </label>
         <span class="text-sm text-muted">实时推送</span>
+      </div>
+    </div>
+    <div class="card mb-16" style="padding: 16px;">
+      <div class="flex items-center justify-between gap-16" style="flex-wrap: wrap;">
+        <div>
+          <div class="text-sm text-muted">下次计划执行</div>
+          <div class="mono">{{ formatDateTime(status.next_run_at) || '—' }}</div>
+        </div>
+        <div>
+          <div class="text-sm text-muted">最近一次运行结果</div>
+          <div>{{ status.last_run_status || '—' }}</div>
+        </div>
+        <div>
+          <div class="text-sm text-muted">最近启动时间</div>
+          <div class="mono">{{ formatDateTime(status.last_run_started_at) || '—' }}</div>
+        </div>
+        <div>
+          <div class="text-sm text-muted">最近完成时间</div>
+          <div class="mono">{{ formatDateTime(status.last_run_finished_at) || '—' }}</div>
+        </div>
+      </div>
+      <div v-if="status.last_run_reason" class="text-sm text-muted mt-16">
+        最近原因：{{ status.last_run_reason }}
+      </div>
+      <div v-if="status.scheduler_error" class="text-sm text-muted mt-16">
+        调度错误：{{ status.scheduler_error }}
+      </div>
+      <div v-if="status.admin_token_required" class="text-sm text-muted mt-16">
+        当前服务已启用 Admin Token 保护。
       </div>
     </div>
     <div v-if="msg" class="text-sm text-muted mb-16">{{ msg }}</div>
@@ -68,6 +101,37 @@
             </span>
           </span>
         </div>
+      </div>
+    </div>
+
+    <div class="mt-24">
+      <h3 style="margin-bottom: 16px;">🕒 最近运行记录</h3>
+      <div class="card" style="padding: 0; overflow: hidden; margin-bottom: 24px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>触发方式</th>
+              <th>状态</th>
+              <th>开始时间</th>
+              <th>完成时间</th>
+              <th>处理结果</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="runs.length === 0">
+              <td colspan="5" style="text-align: center; padding: 24px;" class="text-muted">
+                暂无运行记录
+              </td>
+            </tr>
+            <tr v-for="run in runs" :key="run.run_id">
+              <td>{{ run.trigger || '—' }}</td>
+              <td>{{ run.status || '—' }}</td>
+              <td class="mono text-sm">{{ formatDateTime(run.started_at) || '—' }}</td>
+              <td class="mono text-sm">{{ formatDateTime(run.finished_at) || '—' }}</td>
+              <td class="text-sm">processed={{ run.items_processed ?? 0 }}, failed={{ run.items_failed ?? 0 }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -114,6 +178,7 @@ import { api } from '../api/client.js'
 const status = ref({})
 const events = ref([])
 const items = ref([])
+const runs = ref([])
 const running = ref(false)
 const autoStream = ref(false)
 const logContainer = ref(null)
@@ -133,6 +198,10 @@ async function refreshItems() {
   try { items.value = await api.getItems(30) } catch {}
 }
 
+async function refreshRuns() {
+  try { runs.value = await api.getRuns(10) } catch {}
+}
+
 async function triggerRun() {
   running.value = true
   msg.value = ''
@@ -143,11 +212,12 @@ async function triggerRun() {
     setTimeout(async () => {
       await refreshLogs()
       await refreshItems()
+      await refreshRuns()
       await refreshStatus()
       running.value = false
     }, 3000)
   } catch (e) {
-    msg.value = e.status === 401 ? '❌ 缺少或无效 Admin Token' : '❌ 触发失败: ' + e.message
+    msg.value = e.status === 401 ? '❌ 缺少或无效 Admin Token' : e.status === 409 ? '⚠️ 已有运行中的任务，请稍后再试' : '❌ 触发失败: ' + e.message
     running.value = false
   }
 }
@@ -184,13 +254,21 @@ function formatTime(ts) {
   return d.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
+function formatDateTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return d.toLocaleString('zh-CN', { hour12: false })
+}
+
 onMounted(() => {
   refreshStatus()
   refreshLogs()
   refreshItems()
+  refreshRuns()
   statusTimer = setInterval(() => {
     refreshStatus()
     refreshItems()
+    refreshRuns()
   }, 10000)
 })
 

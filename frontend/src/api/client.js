@@ -61,6 +61,9 @@ export const api = {
     // Items
     getItems: (limit = 50) => request(`/items?limit=${limit}`),
 
+    // Runs
+    getRuns: (limit = 20) => request(`/runs?limit=${limit}`),
+
     // Plugin discovery
     discoverPlugins: () => request('/plugins/discover'),
 

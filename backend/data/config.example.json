@@ -91,6 +91,7 @@
         ]
     },
     "runtime": {
+        "scheduler_enabled": false,
         "schedule_cron": "0 */6 * * *",
         "timezone": "Asia/Shanghai"
     }

@@ -86,10 +86,15 @@
       <!-- Runtime Settings -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">⏰ 运行时</span>
+          <span class="card-title">⏰ 运行时 / 调度</span>
         </div>
-        <div class="form-hint" style="margin-bottom: 12px;">
-          当前版本会保存调度参数，但内置定时调度器尚未启用。
+        <div class="form-group">
+          <label class="form-label">启用计划执行</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="form.runtime.scheduler_enabled" />
+            <span class="toggle-slider"></span>
+          </label>
+          <div class="form-hint">开启后，服务会按 Cron 配置自动调度 workflow。</div>
         </div>
         <div class="form-group">
           <label class="form-label">定时 Cron 表达式</label>
@@ -99,6 +104,7 @@
             placeholder="0 */6 * * *"
           />
           <div class="form-hint">例如: 0 */6 * * * (每6小时执行一次)</div>
+          <div class="form-hint">当前实现支持 `*`、`*/N`、单值、逗号列表和范围。</div>
         </div>
         <div class="form-group">
           <label class="form-label">时区</label>
@@ -107,6 +113,7 @@
             v-model="form.runtime.timezone"
             placeholder="Asia/Shanghai"
           />
+          <div class="form-hint">建议使用 `UTC` 或 `Asia/Shanghai`。</div>
         </div>
       </div>
 
@@ -168,7 +175,7 @@ const form = ref({
     max_concurrency: 3,
     retry_policy: { default_retries: 2 },
   },
-  runtime: { schedule_cron: '0 */6 * * *', timezone: 'Asia/Shanghai' },
+  runtime: { scheduler_enabled: false, schedule_cron: '0 */6 * * *', timezone: 'Asia/Shanghai' },
 })
 
 const soulContent = ref('')
@@ -188,7 +195,10 @@ async function loadConfig() {
     const cfg = await api.getConfig()
     form.value.global = cfg.global || form.value.global
     form.value.workflow = cfg.workflow || form.value.workflow
-    form.value.runtime = cfg.runtime || form.value.runtime
+    form.value.runtime = {
+      ...form.value.runtime,
+      ...(cfg.runtime || {}),
+    }
   } catch (e) {
     msg.value = e.status === 401 ? '⚠️ 缺少或无效 Admin Token' : '⚠️ 加载失败: ' + e.message
   }
@@ -216,7 +226,7 @@ async function saveConfig() {
       }),
       api.saveSoulPrompt(soulContent.value),
     ])
-    msg.value = '✅ 配置已保存'
+    msg.value = '✅ 配置已保存，调度状态已刷新'
     setTimeout(() => msg.value = '', 3000)
   } catch (e) {
     msg.value = e.status === 401 ? '❌ 缺少或无效 Admin Token' : '❌ 保存失败: ' + e.message

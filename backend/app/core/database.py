@@ -12,6 +12,7 @@ twice.  Three independent fingerprint columns allow flexible matching:
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +37,27 @@ CREATE TABLE IF NOT EXISTS processed_items (
 CREATE INDEX IF NOT EXISTS idx_source_uri_hash ON processed_items(source_uri_hash);
 CREATE INDEX IF NOT EXISTS idx_content_hash    ON processed_items(content_hash);
 CREATE INDEX IF NOT EXISTS idx_external_id     ON processed_items(external_id);
+
+CREATE TABLE IF NOT EXISTS runtime_state (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS run_history (
+    run_id         TEXT PRIMARY KEY,
+    trigger        TEXT,
+    status         TEXT,
+    reason         TEXT,
+    started_at     TEXT,
+    finished_at    TEXT,
+    duration_ms    INTEGER,
+    items_fetched  INTEGER,
+    items_processed INTEGER,
+    items_skipped_dedup INTEGER,
+    items_failed   INTEGER,
+    created_at     TEXT NOT NULL
+);
 """
 
 
@@ -177,6 +199,139 @@ class DedupDatabase:
         assert self._conn is not None
         row = self._conn.execute("SELECT COUNT(*) FROM processed_items").fetchone()
         return row[0] if row else 0
+
+    def set_runtime_state(self, key: str, value: dict[str, Any]) -> None:
+        self._ensure_connected()
+        assert self._conn is not None
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO runtime_state (key, value, updated_at)
+            VALUES (?, ?, ?)
+            """,
+            (key, json.dumps(value, ensure_ascii=False), now),
+        )
+        self._conn.commit()
+
+    def get_runtime_state(self, key: str) -> dict[str, Any] | None:
+        self._ensure_connected()
+        assert self._conn is not None
+        row = self._conn.execute(
+            "SELECT value FROM runtime_state WHERE key = ?",
+            (key,),
+        ).fetchone()
+        if not row:
+            return None
+        return json.loads(row[0])
+
+    def upsert_scheduler_state(
+        self,
+        *,
+        enabled: bool,
+        cron: str,
+        timezone: str,
+        next_run_at: str | None,
+        active_run_id: str | None = None,
+        last_run_started_at: str | None = None,
+        last_run_finished_at: str | None = None,
+        last_run_status: str | None = None,
+        last_run_reason: str | None = None,
+        scheduler_error: str | None = None,
+    ) -> None:
+        current = self.get_scheduler_state() or {}
+        current.update({
+            "enabled": enabled,
+            "cron": cron,
+            "timezone": timezone,
+            "next_run_at": next_run_at,
+            "active_run_id": (
+                active_run_id
+                if active_run_id is not None
+                else current.get("active_run_id")
+            ),
+            "last_run_started_at": (
+                last_run_started_at
+                if last_run_started_at is not None
+                else current.get("last_run_started_at")
+            ),
+            "last_run_finished_at": (
+                last_run_finished_at
+                if last_run_finished_at is not None
+                else current.get("last_run_finished_at")
+            ),
+            "last_run_status": (
+                last_run_status
+                if last_run_status is not None
+                else current.get("last_run_status")
+            ),
+            "last_run_reason": (
+                last_run_reason
+                if last_run_reason is not None
+                else current.get("last_run_reason")
+            ),
+            "scheduler_error": (
+                scheduler_error
+                if scheduler_error is not None
+                else current.get("scheduler_error")
+            ),
+        })
+        self.set_runtime_state("scheduler", current)
+
+    def get_scheduler_state(self) -> dict[str, Any] | None:
+        return self.get_runtime_state("scheduler")
+
+    def record_run_history(
+        self,
+        *,
+        run_id: str,
+        trigger: str,
+        status: str,
+        reason: str,
+        started_at: str | None,
+        finished_at: str | None,
+        duration_ms: int | None,
+        items_fetched: int,
+        items_processed: int,
+        items_skipped_dedup: int,
+        items_failed: int,
+    ) -> None:
+        self._ensure_connected()
+        assert self._conn is not None
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO run_history (
+                run_id, trigger, status, reason, started_at, finished_at,
+                duration_ms, items_fetched, items_processed,
+                items_skipped_dedup, items_failed, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                trigger,
+                status,
+                reason,
+                started_at,
+                finished_at,
+                duration_ms,
+                items_fetched,
+                items_processed,
+                items_skipped_dedup,
+                items_failed,
+                now,
+            ),
+        )
+        self._conn.commit()
+
+    def recent_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        self._ensure_connected()
+        assert self._conn is not None
+        rows = self._conn.execute(
+            "SELECT * FROM run_history ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # -- internals ----------------------------------------------------------
 

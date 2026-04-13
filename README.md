@@ -92,6 +92,7 @@ nano .env   # 或用 vim / VS Code
 | `LARK_WEBHOOK_URL` | 飞书群机器人 Webhook | 仅启用飞书分发时 |
 | `OMNIFLOW_ADMIN_TOKEN` | 保护配置写入、手动触发工作流和人格编辑的管理口令 | 可选，公网部署建议设置 |
 | `OMNIFLOW_DATA_DIR` | 运行时数据目录根路径 | 可选，Docker 默认 `/app/data` |
+| `runtime.scheduler_enabled` | 是否启用内置调度器 | 通过 WebUI 配置 |
 
 **3. 一键构建并启动**
 
@@ -114,9 +115,9 @@ docker-compose logs -f --tail 50
 **5. 访问控制台**
 
 浏览器打开 `http://你的IP:8000`，即可看到 Omni-InfoFlow 控制台：
-- `/dashboard`  — 实时监控大盘
+- `/dashboard`  — 实时监控大盘（状态、日志、最近运行记录）
 - `/plugins`    — 插件市场（启用/配置插件）
-- `/setup`      — 全局策略设定
+- `/setup`      — 全局策略设定 / 调度配置 / Admin Token / Prompt
 
 **6. 数据持久化说明**
 
@@ -133,6 +134,7 @@ docker-compose logs -f --tail 50
 
 所有数据都在宿主机 `./data/` 目录中。**容器重建或升级代码后数据不会丢失。**
 如果未设置 `OMNIFLOW_DATA_DIR`，本地开发默认也使用项目根目录下的 `./data/`。
+当前版本已支持按 `runtime.scheduler_enabled + schedule_cron + timezone` 自动调度 workflow。
 
 **7. 升级版本**
 
@@ -175,6 +177,8 @@ uvicorn app.main:app --reload --port 8000
 > 如需自定义，可在 `.env` 或环境变量中设置 `OMNIFLOW_DATA_DIR`。
 >
 > 如设置了 `OMNIFLOW_ADMIN_TOKEN`，前端 Setup 页面需要先填写 Admin Token，才能保存配置、触发运行和编辑 `soul.md`。
+>
+> 如开启 `scheduler_enabled` 且配置了有效的 `schedule_cron` / `timezone`，服务会在运行期间自动调度 workflow。
 
 后端启动后，API 文档自动可用：`http://localhost:8000/docs`
 
@@ -198,6 +202,12 @@ npm run dev
 cd backend
 python -m pytest tests/ -v
 ```
+
+当前测试已覆盖：
+- 核心 pipeline engine
+- 配置与数据库
+- 事件总线
+- scheduler 的 next-run 计算
 
 ---
 

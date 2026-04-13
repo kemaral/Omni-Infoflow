@@ -26,6 +26,9 @@
         <span class="text-sm text-muted">
           {{ status.processed_items_count ?? '—' }} items processed
         </span>
+        <div class="text-sm text-muted mt-16">
+          scheduler: {{ status.scheduler_enabled ? 'on' : 'off' }}
+        </div>
       </div>
     </aside>
 
