@@ -85,64 +85,11 @@ class SchedulerService:
         )
 
     async def refresh(self, *, force_recompute: bool = False) -> SchedulerSnapshot:
-        cfg = await self._config_manager.load(force=force_recompute)
-        runtime = cfg.runtime or {}
-        cron = str(runtime.get("schedule_cron", "")).strip()
-        timezone = str(runtime.get("timezone", "UTC")).strip() or "UTC"
-        enabled = bool(runtime.get("scheduler_enabled", False)) and bool(cron)
-
-        snapshot = self._state_db.get_scheduler_state()
-        next_run_at = snapshot.get("next_run_at") if snapshot else None
-        active_run_id = snapshot.get("active_run_id") if snapshot else None
-        last_run_started_at = snapshot.get("last_run_started_at") if snapshot else None
-        last_run_finished_at = snapshot.get("last_run_finished_at") if snapshot else None
-        last_run_status = snapshot.get("last_run_status") if snapshot else None
-        last_run_reason = snapshot.get("last_run_reason") if snapshot else None
-        scheduler_error = snapshot.get("scheduler_error") if snapshot else None
-
-        if force_recompute or enabled:
-            try:
-                next_dt = (
-                    compute_next_run_utc(cron, timezone_name=timezone)
-                    if enabled
-                    else None
-                )
-                next_run_at = next_dt.isoformat() if next_dt else None
-                scheduler_error = None
-            except ValueError as exc:
-                next_run_at = None
-                scheduler_error = str(exc)
-            self._state_db.upsert_scheduler_state(
-                enabled=enabled,
-                cron=cron,
-                timezone=timezone,
-                next_run_at=next_run_at,
-                scheduler_error=scheduler_error,
-            )
-        else:
-            self._state_db.upsert_scheduler_state(
-                enabled=False,
-                cron=cron,
-                timezone=timezone,
-                next_run_at=None,
-                scheduler_error=None,
-            )
-            next_run_at = None
-            scheduler_error = None
-
+        runtime = await self._load_runtime_settings(force_recompute)
+        state = self._calculate_scheduler_state(runtime)
+        self._state_db.upsert_scheduler_state(**state)
         self._wake_event.set()
-        return SchedulerSnapshot(
-            enabled=enabled,
-            cron=cron,
-            timezone=timezone,
-            next_run_at=next_run_at,
-            last_run_started_at=last_run_started_at,
-            last_run_finished_at=last_run_finished_at,
-            last_run_status=last_run_status,
-            last_run_reason=last_run_reason,
-            active_run_id=active_run_id,
-            scheduler_error=scheduler_error,
-        )
+        return self.snapshot()
 
     def snapshot(self) -> SchedulerSnapshot:
         state = self._state_db.get_scheduler_state()
@@ -160,6 +107,48 @@ class SchedulerService:
             active_run_id=state.get("active_run_id"),
             scheduler_error=state.get("scheduler_error"),
         )
+
+    async def _load_runtime_settings(self, force_recompute: bool) -> dict[str, Any]:
+        cfg = await self._config_manager.load(force=force_recompute)
+        runtime = cfg.runtime or {}
+        return {
+            "enabled": bool(runtime.get("scheduler_enabled", False)),
+            "cron": str(runtime.get("schedule_cron", "")).strip(),
+            "timezone": str(runtime.get("timezone", "UTC")).strip() or "UTC",
+        }
+
+    def _calculate_scheduler_state(self, runtime: dict[str, Any]) -> dict[str, Any]:
+        snapshot = self._state_db.get_scheduler_state() or {}
+        enabled = bool(runtime["enabled"]) and bool(runtime["cron"])
+        next_run_at: str | None = snapshot.get("next_run_at")
+        scheduler_error = snapshot.get("scheduler_error")
+
+        if enabled:
+            try:
+                next_run_at = compute_next_run_utc(
+                    runtime["cron"],
+                    timezone_name=runtime["timezone"],
+                ).isoformat()
+                scheduler_error = None
+            except ValueError as exc:
+                next_run_at = None
+                scheduler_error = str(exc)
+        else:
+            next_run_at = None
+            scheduler_error = None
+
+        return {
+            "enabled": enabled,
+            "cron": runtime["cron"],
+            "timezone": runtime["timezone"],
+            "next_run_at": next_run_at,
+            "active_run_id": snapshot.get("active_run_id"),
+            "last_run_started_at": snapshot.get("last_run_started_at"),
+            "last_run_finished_at": snapshot.get("last_run_finished_at"),
+            "last_run_status": snapshot.get("last_run_status"),
+            "last_run_reason": snapshot.get("last_run_reason"),
+            "scheduler_error": scheduler_error,
+        }
 
     async def _loop(self) -> None:
         while True:

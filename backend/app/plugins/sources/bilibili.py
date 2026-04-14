@@ -40,53 +40,55 @@ class BilibiliHotPlugin(BaseSourcePlugin):
 
     async def fetch(self, context: RunContext) -> list[PluginResult]:
         limit = min(self.config.get("limit", 10), 50)
-        url = _API_URL.format(limit=limit)
-        results: list[PluginResult] = []
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
-
-            if data.get("code") != 0:
-                raise RuntimeError(f"Bilibili API error: {data.get('message')}")
-
-            items = data.get("data", {}).get("list", [])
-            for item in items[:limit]:
-                bvid = item.get("bvid", "")
-                title = item.get("title", "Untitled")
-                desc = item.get("desc", "")
-                owner = item.get("owner", {}).get("name", "Unknown")
-                link = f"https://www.bilibili.com/video/{bvid}"
-
-                wf_item = WorkflowItem(
-                    id=uuid.uuid4().hex,
-                    source_type="bilibili",
-                    source_uri=link,
-                    title=title,
-                    raw_content=f"{title}\n\n{desc}\n\nUP主: {owner}",
-                    metadata={
-                        "external_id": bvid,
-                        "author": owner,
-                        "view_count": item.get("stat", {}).get("view", 0),
-                        "like_count": item.get("stat", {}).get("like", 0),
-                        "pubdate": item.get("pubdate", 0),
-                    },
-                )
-                results.append(PluginResult(success=True, item=wf_item))
-
+            items = await self._fetch_items(limit)
+            return [
+                PluginResult(success=True, item=self._to_workflow_item(item))
+                for item in items[:limit]
+            ]
         except Exception as exc:
-            results.append(
-                PluginResult(
-                    success=False,
-                    item=WorkflowItem(
-                        source_type="bilibili",
-                        source_uri="api.bilibili.com",
-                        title="[API Fetch Error]",
-                    ),
-                    error=f"Failed to fetch Bilibili hot list: {exc}",
-                )
-            )
+            return [self._build_error_result(exc)]
 
-        return results
+    async def _fetch_items(self, limit: int) -> list[dict[str, Any]]:
+        url = _API_URL.format(limit=limit)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+
+        if data.get("code") != 0:
+            raise RuntimeError(f"Bilibili API error: {data.get('message')}")
+        return data.get("data", {}).get("list", [])
+
+    def _to_workflow_item(self, item: dict[str, Any]) -> WorkflowItem:
+        bvid = item.get("bvid", "")
+        title = item.get("title", "Untitled")
+        desc = item.get("desc", "")
+        owner = item.get("owner", {}).get("name", "Unknown")
+        link = f"https://www.bilibili.com/video/{bvid}"
+        return WorkflowItem(
+            id=uuid.uuid4().hex,
+            source_type="bilibili",
+            source_uri=link,
+            title=title,
+            raw_content=f"{title}\n\n{desc}\n\nUP主: {owner}",
+            metadata={
+                "external_id": bvid,
+                "author": owner,
+                "view_count": item.get("stat", {}).get("view", 0),
+                "like_count": item.get("stat", {}).get("like", 0),
+                "pubdate": item.get("pubdate", 0),
+            },
+        )
+
+    def _build_error_result(self, exc: Exception) -> PluginResult:
+        return PluginResult(
+            success=False,
+            item=WorkflowItem(
+                source_type="bilibili",
+                source_uri="api.bilibili.com",
+                title="[API Fetch Error]",
+            ),
+            error=f"Failed to fetch Bilibili hot list: {exc}",
+        )

@@ -239,42 +239,19 @@ class DedupDatabase:
         scheduler_error: str | None = None,
     ) -> None:
         current = self.get_scheduler_state() or {}
-        current.update({
+        updates = {
             "enabled": enabled,
             "cron": cron,
             "timezone": timezone,
             "next_run_at": next_run_at,
-            "active_run_id": (
-                active_run_id
-                if active_run_id is not None
-                else current.get("active_run_id")
-            ),
-            "last_run_started_at": (
-                last_run_started_at
-                if last_run_started_at is not None
-                else current.get("last_run_started_at")
-            ),
-            "last_run_finished_at": (
-                last_run_finished_at
-                if last_run_finished_at is not None
-                else current.get("last_run_finished_at")
-            ),
-            "last_run_status": (
-                last_run_status
-                if last_run_status is not None
-                else current.get("last_run_status")
-            ),
-            "last_run_reason": (
-                last_run_reason
-                if last_run_reason is not None
-                else current.get("last_run_reason")
-            ),
-            "scheduler_error": (
-                scheduler_error
-                if scheduler_error is not None
-                else current.get("scheduler_error")
-            ),
-        })
+            "active_run_id": active_run_id,
+            "last_run_started_at": last_run_started_at,
+            "last_run_finished_at": last_run_finished_at,
+            "last_run_status": last_run_status,
+            "last_run_reason": last_run_reason,
+            "scheduler_error": scheduler_error,
+        }
+        current.update(self._compact_runtime_state_updates(current, updates))
         self.set_runtime_state("scheduler", current)
 
     def get_scheduler_state(self) -> dict[str, Any] | None:
@@ -332,6 +309,16 @@ class DedupDatabase:
             (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def _compact_runtime_state_updates(
+        self,
+        current: dict[str, Any],
+        updates: dict[str, Any],
+    ) -> dict[str, Any]:
+        compacted: dict[str, Any] = {}
+        for key, value in updates.items():
+            compacted[key] = value if value is not None else current.get(key)
+        return compacted
 
     # -- internals ----------------------------------------------------------
 

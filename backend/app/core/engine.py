@@ -25,6 +25,7 @@ import logging
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -145,6 +146,15 @@ class PluginRegistry:
 # PipelineEngine — main orchestrator (v2)
 # ---------------------------------------------------------------------------
 
+@dataclass
+class ExecutionState:
+    cfg: Any
+    context: RunContext
+    policy: WorkflowPolicy
+    stats: dict[str, Any]
+    step_categories: list[str]
+
+
 class PipelineEngine:
     """Coordinates a single workflow run with retry, concurrency, and telemetry.
 
@@ -166,18 +176,24 @@ class PipelineEngine:
 
     async def execute(self) -> dict[str, Any]:
         """Run the full pipeline once and return a summary dict."""
+        run_start = time.monotonic()
+        state = await self._build_execution_state()
+        all_items = await self._fetch_source_items(state)
+        unique_items = await self._filter_unique_items(all_items, state)
+        await self._process_items(unique_items, state)
+        state.stats["duration_ms"] = int((time.monotonic() - run_start) * 1000)
+        log.info("Run %s complete: %s", state.context.run_id, state.stats)
+        return state.stats
+
+    async def _build_execution_state(self) -> ExecutionState:
         cfg = await self.config.load()
         run_id = uuid.uuid4().hex
-        run_start = time.monotonic()
-
         context = RunContext(
             run_id=run_id,
             config_snapshot=cfg.model_dump(by_alias=True),
             started_at=datetime.now(timezone.utc),
             temp_dir=tempfile.mkdtemp(prefix=f"omniflow-{run_id[:8]}-"),
         )
-
-        policy = cfg.workflow
         stats: dict[str, Any] = {
             "run_id": run_id,
             "items_fetched": 0,
@@ -187,22 +203,29 @@ class PipelineEngine:
             "errors": [],
             "duration_ms": 0,
         }
-
-        # ── Step 1: Source fetch  ──────────────────────────────────────────
-        sources = PluginRegistry.instantiate_sources(
-            cfg.plugins.get("sources", [])
+        return ExecutionState(
+            cfg=cfg,
+            context=context,
+            policy=cfg.workflow,
+            stats=stats,
+            step_categories=[s for s in cfg.workflow.steps if s != "source"],
         )
-        all_items: list[WorkflowItem] = []
 
+    async def _fetch_source_items(self, state: ExecutionState) -> list[WorkflowItem]:
+        sources = PluginRegistry.instantiate_sources(
+            state.cfg.plugins.get("sources", [])
+        )
+        items: list[WorkflowItem] = []
         for src in sources:
-            fetched = await self._run_source_with_retry(
-                src, context, policy
-            )
-            all_items.extend(fetched)
+            items.extend(await self._run_source_with_retry(src, state))
+        state.stats["items_fetched"] = len(items)
+        return items
 
-        stats["items_fetched"] = len(all_items)
-
-        # ── Step 2: Dedup filter ──────────────────────────────────────────
+    async def _filter_unique_items(
+        self,
+        all_items: list[WorkflowItem],
+        state: ExecutionState,
+    ) -> list[WorkflowItem]:
         unique_items: list[WorkflowItem] = []
         for item in all_items:
             if self.db.is_duplicate(
@@ -210,82 +233,69 @@ class PipelineEngine:
                 content=item.raw_content or "",
                 external_id=item.metadata.get("external_id"),
             ):
-                stats["items_skipped_dedup"] += 1
+                state.stats["items_skipped_dedup"] += 1
                 await self._emit(
-                    context, item.id, "dedup", "dedup", "skipped",
+                    state.context,
+                    item.id,
+                    "dedup",
+                    "dedup",
+                    "skipped",
                     message=f"Duplicate: {item.title or item.source_uri}",
                 )
                 continue
             unique_items.append(item)
+        return unique_items
 
-        # ── Step 3..N: Processing pipeline with concurrency control ───────
-        semaphore = asyncio.Semaphore(max(1, policy.max_concurrency))
-        step_categories = [s for s in policy.steps if s != "source"]
+    async def _process_items(
+        self,
+        items: list[WorkflowItem],
+        state: ExecutionState,
+    ) -> None:
+        semaphore = asyncio.Semaphore(max(1, state.policy.max_concurrency))
 
         async def process_item(item: WorkflowItem) -> bool:
             async with semaphore:
-                return await self._process_single_item(
-                    item, step_categories, cfg, context, policy, stats
-                )
+                return await self._process_single_item(item, state)
 
-        tasks = [process_item(item) for item in unique_items]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(
+            *(process_item(item) for item in items),
+            return_exceptions=True,
+        )
 
-        for i, result in enumerate(results):
+        for index, result in enumerate(results):
             if isinstance(result, Exception):
-                stats["errors"].append(
-                    f"item/{unique_items[i].id}: unhandled {result}"
+                state.stats["errors"].append(
+                    f"item/{items[index].id}: unhandled {result}"
                 )
-                stats["items_failed"] += 1
-
-        stats["duration_ms"] = int((time.monotonic() - run_start) * 1000)
-        log.info("Run %s complete: %s", run_id, stats)
-        return stats
+                state.stats["items_failed"] += 1
 
     # -- item-level pipeline ------------------------------------------------
 
     async def _process_single_item(
         self,
         item: WorkflowItem,
-        step_categories: list[str],
-        cfg: Any,
-        context: RunContext,
-        policy: WorkflowPolicy,
-        stats: dict[str, Any],
+        state: ExecutionState,
     ) -> bool:
         """Run one item through the full processing pipeline."""
         item_failed = False
 
-        for step in step_categories:
+        for step in state.step_categories:
             category_key = self._category_key(step)
             plugins = PluginRegistry.instantiate_processors(
-                cfg.plugins.get(category_key, [])
+                state.cfg.plugins.get(category_key, [])
             )
 
-            # Skip optional steps with no plugins configured
-            if not plugins and step in policy.optional_steps:
-                await self._emit(
-                    context, item.id, "engine", step, "skipped",
-                    message="No plugins configured (optional step)",
-                )
-                continue
-
-            # If no plugins and step is mandatory, that's a config warning
             if not plugins:
-                await self._emit(
-                    context, item.id, "engine", step, "skipped",
-                    message="No plugins configured (mandatory step — check config)",
-                )
-                continue
+                if await self._handle_missing_plugins(item, step, state):
+                    continue
 
             for plugin in plugins:
                 success = await self._run_plugin_with_retry(
-                    plugin, item, context, step, policy, stats
+                    plugin, item, step, state
                 )
                 if success:
-                    # item may have been mutated in-place by the plugin
-                    pass
-                elif step not in policy.continue_on_error:
+                    continue
+                if step not in state.policy.continue_on_error:
                     item_failed = True
                     break
 
@@ -304,38 +314,64 @@ class PipelineEngine:
         )
 
         if item_failed:
-            stats["items_failed"] = stats.get("items_failed", 0) + 1
+            state.stats["items_failed"] = state.stats.get("items_failed", 0) + 1
         else:
-            stats["items_processed"] += 1
+            state.stats["items_processed"] += 1
 
         return not item_failed
 
     # -- retry wrappers -----------------------------------------------------
 
+    async def _handle_missing_plugins(
+        self,
+        item: WorkflowItem,
+        step: str,
+        state: ExecutionState,
+    ) -> bool:
+        if step in state.policy.optional_steps:
+            await self._emit(
+                state.context,
+                item.id,
+                "engine",
+                step,
+                "skipped",
+                message="No plugins configured (optional step)",
+            )
+            return True
+
+        await self._emit(
+            state.context,
+            item.id,
+            "engine",
+            step,
+            "skipped",
+            message="No plugins configured (mandatory step — check config)",
+        )
+        return True
+
     async def _run_source_with_retry(
         self,
         src: BaseSourcePlugin,
-        context: RunContext,
-        policy: WorkflowPolicy,
+        state: ExecutionState,
     ) -> list[WorkflowItem]:
         """Fetch from a source with retry on failure."""
-        max_retries = policy.retry_policy.get("default_retries", 2)
+        max_retries = state.policy.retry_policy.get("default_retries", 2)
         items: list[WorkflowItem] = []
 
         for attempt in range(max_retries + 1):
             t0 = time.monotonic()
             await self._emit(
-                context, "", src.manifest.name, "source", "started",
+                state.context, "", src.manifest.name, "source", "started",
                 message=f"attempt {attempt + 1}/{max_retries + 1}",
             )
             try:
-                results = await src.fetch(context)
+                results = await src.fetch(state.context)
                 duration = int((time.monotonic() - t0) * 1000)
                 for r in results:
                     if r.success:
                         items.append(r.item)
                 await self._emit(
-                    context, "", src.manifest.name, "source", "success",
+                    state.context, "", src.manifest.name, "source", "success",
                     message=f"Fetched {len(results)} item(s)",
                     duration_ms=duration,
                 )
@@ -349,14 +385,14 @@ class PipelineEngine:
                         src.manifest.name, attempt + 1, wait, exc,
                     )
                     await self._emit(
-                        context, "", src.manifest.name, "source", "failed",
+                        state.context, "", src.manifest.name, "source", "failed",
                         message=f"Retry {attempt+1}: {exc}",
                         duration_ms=duration,
                     )
                     await asyncio.sleep(wait)
                 else:
                     await self._emit(
-                        context, "", src.manifest.name, "source", "failed",
+                        state.context, "", src.manifest.name, "source", "failed",
                         message=f"All retries exhausted: {exc}",
                         duration_ms=duration,
                     )
@@ -366,30 +402,28 @@ class PipelineEngine:
         self,
         plugin: BasePlugin,
         item: WorkflowItem,
-        context: RunContext,
         step: str,
-        policy: WorkflowPolicy,
-        stats: dict[str, Any],
+        state: ExecutionState,
     ) -> bool:
         """Execute a processing plugin with retry on failure."""
-        max_retries = policy.retry_policy.get("default_retries", 2)
+        max_retries = state.policy.retry_policy.get("default_retries", 2)
 
         for attempt in range(max_retries + 1):
             t0 = time.monotonic()
             await self._emit(
-                context, item.id, plugin.manifest.name, step, "started",
+                state.context, item.id, plugin.manifest.name, step, "started",
                 message=f"attempt {attempt + 1}/{max_retries + 1}"
                          if attempt > 0 else "",
             )
             try:
-                result = await plugin.run(item, context)
+                result = await plugin.run(item, state.context)
                 duration = int((time.monotonic() - t0) * 1000)
 
                 if result.success:
                     # Merge mutations back into item (in-place via reference)
                     # The item object is shared, so plugin mutations persist
                     await self._emit(
-                        context, item.id, plugin.manifest.name, step,
+                        state.context, item.id, plugin.manifest.name, step,
                         "success", message="",
                         duration_ms=duration,
                     )
@@ -403,7 +437,7 @@ class PipelineEngine:
                             result.error,
                         )
                         await self._emit(
-                            context, item.id, plugin.manifest.name, step,
+                            state.context, item.id, plugin.manifest.name, step,
                             "failed",
                             message=f"Retry {attempt+1}: {result.error}",
                             duration_ms=duration,
@@ -411,12 +445,12 @@ class PipelineEngine:
                         await asyncio.sleep(2 ** attempt)
                     else:
                         await self._emit(
-                            context, item.id, plugin.manifest.name, step,
+                            state.context, item.id, plugin.manifest.name, step,
                             "failed",
                             message=f"All retries exhausted: {result.error}",
                             duration_ms=duration,
                         )
-                        stats["errors"].append(
+                        state.stats["errors"].append(
                             f"{step}/{plugin.manifest.name}: {result.error}"
                         )
                         return False
@@ -442,7 +476,7 @@ class PipelineEngine:
                         message=f"All retries exhausted: {exc}",
                         duration_ms=duration,
                     )
-                    stats["errors"].append(
+                    state.stats["errors"].append(
                         f"{step}/{plugin.manifest.name}: {exc}"
                     )
                     return False
